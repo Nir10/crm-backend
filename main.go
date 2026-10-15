@@ -6,17 +6,25 @@ import (
 	"io/ioutil"
 	"net/http"
 	"slices"
-	"strconv"
 
+	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 )
 
 type Customer struct {
-	ID        int    `json:"id"`
+	ID        string `json:"id"`
 	Name      string `json:"name"`
 	Role      string `json:"role"`
 	Email     string `json:"email"`
-	Phone     string `json:"phone"`
+	Phone     int64  `json:"phone" len:"10"`
+	Contacted bool   `json:"contacted"`
+}
+
+type CustomerRequest struct {
+	Name      string `json:"name"`
+	Role      string `json:"role"`
+	Email     string `json:"email"`
+	Phone     int64  `json:"phone" len:"10"`
 	Contacted bool   `json:"contacted"`
 }
 
@@ -29,9 +37,9 @@ type Message struct {
 }
 
 var customers = []Customer{
-	{1, "John", "Customer", "john@abc.com", "9234562341", false},
-	{2, "Paul", "Customer", "paul@pqr.com", "9231928201", true},
-	{3, "Max", "Customer", "max@xyz.com", "9241029203", false},
+	{"9f7d3f64-5f06-4e28-9d34-ff4f2e5d0db1", "John", "Customer", "john@abc.com", 9234562341, false},
+	{"c8b7f0e3-3476-4b21-a2c4-3d5b5f5b8a6a", "Paul", "Customer", "paul@pqr.com", 9231928201, true},
+	{"2b4c1fb5-51cb-4ff7-8d4e-9b7df673f7a2", "Max", "Customer", "max@xyz.com", 9241029203, false},
 }
 
 func index(w http.ResponseWriter, r *http.Request) {
@@ -42,15 +50,8 @@ func getCustomer(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 
-	idStr := mux.Vars(r)["id"]
-	if idStr == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(Error{"Invalid ID"})
-		return
-	}
-
-	id, err := strconv.Atoi(idStr)
-	if err != nil {
+	id := mux.Vars(r)["id"]
+	if id == "" {
 		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(Error{"Invalid ID"})
 		return
@@ -80,24 +81,19 @@ func addCustomer(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 
-	var customer Customer
+	var customerReq CustomerRequest
 
 	reqBody, _ := ioutil.ReadAll(r.Body)
-	err := json.Unmarshal(reqBody, &customer)
+	err := json.Unmarshal(reqBody, &customerReq)
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(Error{"Invalid request body"})
 		return
 	}
 
-	for _, existingCustomer := range customers {
-		if existingCustomer.ID == customer.ID {
-			w.WriteHeader(http.StatusConflict)
-			_ = json.NewEncoder(w).Encode(Error{"Customer already exists"})
-			return
-		}
-	}
+	id := uuid.New().String()
 
+	var customer = Customer{id, customerReq.Name, customerReq.Role, customerReq.Email, customerReq.Phone, customerReq.Contacted}
 	customers = append(customers, customer)
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(customer)
@@ -107,18 +103,18 @@ func addCustomer(w http.ResponseWriter, r *http.Request) {
 func updateCustomer(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
-	customerId, errID := strconv.Atoi(mux.Vars(r)["id"])
+	customerId := mux.Vars(r)["id"]
 
-	if errID != nil {
+	if customerId == "" {
 		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(Error{"Invalid customer id"})
 		return
 	}
 
-	var customer Customer
+	var customerReq CustomerRequest
 
 	reqBody, _ := ioutil.ReadAll(r.Body)
-	errBody := json.Unmarshal(reqBody, &customer)
+	errBody := json.Unmarshal(reqBody, &customerReq)
 	if errBody != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(Error{"Invalid request body"})
@@ -127,13 +123,24 @@ func updateCustomer(w http.ResponseWriter, r *http.Request) {
 
 	for i, customer := range customers {
 		if customer.ID == customerId {
-			customers[i] = customer
+			updatedCustomer := Customer{
+				ID:        customer.ID,
+				Name:      customerReq.Name,
+				Role:      customerReq.Role,
+				Email:     customerReq.Email,
+				Phone:     customerReq.Phone,
+				Contacted: customerReq.Contacted,
+			}
+
+			customers[i] = updatedCustomer
 			w.WriteHeader(http.StatusOK)
-			_ = json.NewEncoder(w).Encode(customer)
+			_ = json.NewEncoder(w).Encode(updatedCustomer)
 			return
 		}
 	}
 
+	w.WriteHeader(http.StatusNotFound)
+	_ = json.NewEncoder(w).Encode(Error{"Customer not found"})
 }
 
 func deleteCustomer(w http.ResponseWriter, r *http.Request) {
@@ -147,19 +154,11 @@ func deleteCustomer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	customerID, err := strconv.Atoi(id)
-
-	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(Error{"Invalid customer id"})
-		return
-	}
-
 	for i, customer := range customers {
-		if customer.ID == customerID {
+		if customer.ID == id {
 			customers = slices.Delete(customers, i, i+1)
 			w.WriteHeader(http.StatusOK)
-			message := fmt.Sprintf("Customer %d is deleted", customerID)
+			message := fmt.Sprintf("Customer %s is deleted", id)
 			_ = json.NewEncoder(w).Encode(Message{message})
 			return
 		}
@@ -174,11 +173,11 @@ func main() {
 	r := mux.NewRouter()
 
 	r.HandleFunc("/", index)
-	r.HandleFunc("/customers/{id:[0-9]+}", getCustomer).Methods("GET")
+	r.HandleFunc("/customers/{id}", getCustomer).Methods("GET")
 	r.HandleFunc("/customers", getCustomers).Methods("GET")
 	r.HandleFunc("/customers", addCustomer).Methods("POST")
-	r.HandleFunc("/customers/{id:[0-9]+}", updateCustomer).Methods("PUT")
-	r.HandleFunc("/customers/{id:[0-9]+}", deleteCustomer).Methods("DELETE")
+	r.HandleFunc("/customers/{id}", updateCustomer).Methods("PUT")
+	r.HandleFunc("/customers/{id}", deleteCustomer).Methods("DELETE")
 
 	fmt.Println("Server is running on port 3000")
 	err := http.ListenAndServe(":3000", r)
