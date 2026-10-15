@@ -38,8 +38,9 @@ bash go version
 
 ### Clone the Repository
 ```
-bash git clone <repository-url> cd CRMBackEnd
+bash git clone https://github.com/Nir10/crm-backend.git cd crm-backend
 ```
+
 ### Install Dependencies
 ```
 bash go mod download
